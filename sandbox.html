@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>follow ME</title>
+    <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+    <div id='modal-overlay'></div>
+    <div id='main-container' class='vignette'></div>
+    <div id='stats'></div>
+
+    <!-- Libraries -->
+    <script src = 'lib/threejs-min.js'></script>
+    <script src = 'lib/stats.js'></script>
+    <script src = 'lib/trackball.js'></script>
+    <script src = 'lib/octree.js'></script>
+    <script src = 'lib/howler-min.js'></script>
+
+    <!-- Helpers -->
+    <script src = 'js/Utils.js'></script>
+    <script src = 'js/SceneryConstructor.js'></script>
+
+    <!-- Scene Objects -->
+    <script src = 'js/WorldObject.js'></script>
+    <script src = 'js/Boid.js'></script>
+    <script src = 'js/Flock.js'></script>
+    <script src = 'js/Cloud.js'></script>
+    <script src = 'js/Mountain.js'></script>
+    <script src = 'js/Planet.js'></script>
+    <script src = 'js/Tree.js'></script>
+    <script src = 'js/World.js'></script>
+    <script src = 'js/SoundStage.js'></script>
+
+    <!-- Interactive Scene -->
+<script>
+var scene    = new THREE.Scene();
+var camera   = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, 1000);
+var renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
+_debug = false;
+renderer.setSize( window.innerWidth, window.innerHeight );
+renderer.setClearColor( '#D2EBE6', 1 );
+document.getElementById( 'main-container' ).appendChild( renderer.domElement );
+
+var UTILS = new UTILS();
+var cloud = new Cloud( new THREE.Vector3(), 1000, scene);
+
+var geo = {
+    top       : 2,
+    height    : 20,
+    bottom    : 5,
+    segments  : 5,
+    hSegments : 2
+}
+var boidGeometry = new THREE.CylinderBufferGeometry( geo.top, geo.bottom, geo.height, geo.segments, geo.hSegments, false );
+var boidMaterial = new THREE.MeshPhongMaterial({
+    color: '#1E232E',
+    fog: false,
+    vertexColors: THREE.VertexColors,
+    shininess: 100,
+    transparent: false,
+    opacity: 1,
+    emissive: '#4582AF',
+    emissiveIntensity: 0.5,
+    flatShading: THREE.FlatShading
+});
+
+//-- Used to generate boid meshes, position them in worldspace for simulation, and merge geometries to single mesh, but not rendered to reduce draw count
+var boidMesh = new THREE.Mesh( boidGeometry, boidMaterial )
+
+//-- One rendered mesh from one geometry containing all vertices of the flock of boids
+var boidTotalGeometry = new THREE.BoxBufferGeometry();
+var boidsTotalMesh    = new THREE.Mesh( boidTotalGeometry, boidMaterial );
+boidsTotalMesh.castShadow = true;
+
+var boids = []
+for( var i = 0; i < 10; i++ ){
+    var boid = new Boid(new THREE.Vector3(), 1);
+    boids.push(boid)
+
+    scene.add(boid.worldPivot)
+}
+
+var flock = new Flock( boids);
+
+cloud.worldPivot.position.z = 0
+camera.position.z -= 700
+camera.lookAt(scene.position)
+
+var clouds = [];
+clouds.push(cloud)
+
+
+
+
+var SoundStage = new SoundStage();
+
+SoundStage.loadAll( function(){
+	SoundStage.compose({
+		sounds : [
+			{
+				sound: 'wind0',
+				loop: true,
+				delay: 0
+			},
+			{
+				sound: 'wind1',
+				loop: true,
+				delay: 1000
+			},
+			{
+				sound: 'wind2',
+				loop: true,
+				delay: 2000
+			},
+			{
+				sound: 'wind3',
+				loop: true,
+				delay: 3000
+			}]
+	})
+});
+
+var masterClock = {
+    delta: 0,
+    time: null
+}
+var controls = new THREE.OrbitControls( camera, renderer.domElement );
+controls.enableDamping = true;
+controls.dampingFactor = 0.15;
+
+
+masterClock.time = new THREE.Clock();
+masterClock.time.start();
+
+function render(){
+    masterClock.delta = masterClock.time.getDelta();
+    controls.update();
+    // runClouds( masterClock, clouds )
+    renderer.clear();
+    renderer.autoClear         = false;
+    renderer.autoUpdateObjects = true;
+    renderer.render( scene, camera );
+    requestAnimationFrame( render );
+}
+render();
+
+
+function runClouds( masterClock, clouds, type ){
+    if( !clouds ){ return }
+    //-- Clouds run across world space
+    var count;
+    var phase;
+    var cloud;
+    var chunk;
+    var scale;
+    var elapsed = masterClock.time.elapsedTime;
+    for ( var i = 0, len = clouds.length; i < len; i++ ){
+        cloud = clouds[ i ];
+        //-- Cloud Opacity Dynamic
+        // console.log( cloud)
+        // cloud.mesh.material.opacity = UTILS.sineWave( 0.2, 0.8, 0.5, elapsed * 100, i * i );
+
+        //-- Geometry dynamic, to mimic wind changes, slight phase shift
+        for ( var j = 0, jLen = cloud.mesh.geometry.vertices.length; j < jLen; j++ ){
+
+            var chunk = cloud.mesh.geometry.vertices[ j ];
+            var time = elapsed * 1000;
+            phase = 1 + j ;
+
+            var sineX = UTILS.sineWave( 0.03, 0.3, 1, time, phase );
+            var sineY = UTILS.sineWave( 0.04, 0.2, 1, time, phase );
+            var sineZ = UTILS.sineWave( 0.03, 0.1, 1, time, phase );
+            chunk.x = chunk.initialX * sineX;
+            chunk.y = chunk.initialY * sineY;
+            chunk.z = chunk.initialZ * sineZ;
+
+        };
+        cloud.mesh.geometry.verticesNeedUpdate = true;
+
+        //-- Cloud size change, slight phase shift
+        scale = UTILS.sineWave( 0.05, 0.4, 0.95, time, i );
+
+        cloud.mesh.scale.set( scale, scale, scale );
+
+    };
+    if( type === 'planetary'){
+        // UTILS.rotateOnAxis( world.clouds, 'Y', elapsed * 0.02 );
+    }
+}
+</script>
+</body>
+</html>
